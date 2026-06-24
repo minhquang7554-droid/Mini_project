@@ -1,0 +1,180 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+/* Constants definition to avoid hard-coding */
+#define SUMMARY_CSV_FILE "dust_summary.csv"
+#define HEADER_ROW "id,parameter,time,value\n"
+#define TIME_STRING_LENGTH 20
+#define MAX_RECORDS 10000
+
+/* Synchronized structure definition */
+typedef struct {
+    int id;
+    char time[TIME_STRING_LENGTH];
+    double value;
+} SensorRecord;
+
+/* Custom sorting algorithm to find median value */
+void sort_ascending(double data_array[], int size) {
+    int i, j;
+    double temp;
+    for (i = 0; i < size - 1; i++) {
+        for (j = 0; j < size - i - 1; j++) {
+            if (data_array[j] > data_array[j + 1]) {
+                temp = data_array[j];
+                data_array[j] = data_array[j + 1];
+                data_array[j + 1] = temp;
+            }
+        }
+    }
+}
+
+/* Function to calculate simulation interval (HH:MM:SS) */
+void calculate_simulation_interval(const char* start_time_str, const char* end_time_str, char* interval_out) {
+    struct tm tm_start = {0};
+    struct tm tm_end = {0};
+    int year1, month1, day1, hour1, min1, sec1;
+    int year2, month2, day2, hour2, min2, sec2;
+
+    sscanf(start_time_str, "%d:%d:%d %d:%d:%d", &year1, &month1, &day1, &hour1, &min1, &sec1);
+    tm_start.tm_year = year1 - 1900;
+    tm_start.tm_mon = month1 - 1;
+    tm_start.tm_mday = day1;
+    tm_start.tm_hour = hour1;
+    tm_start.tm_min = min1;
+    tm_start.tm_sec = sec1;
+
+    sscanf(end_time_str, "%d:%d:%d %d:%d:%d", &year2, &month2, &day2, &hour2, &min2, &sec2);
+    tm_end.tm_year = year2 - 1900;
+    tm_end.tm_mon = month2 - 1;
+    tm_end.tm_mday = day2;
+    tm_end.tm_hour = hour2;
+    tm_end.tm_min = min2;
+    tm_end.tm_sec = sec2;
+
+    time_t time_start = mktime(&tm_start);
+    time_t time_end = mktime(&tm_end);
+    double diff = difftime(time_end, time_start);
+
+    int total_hours = (int)(diff / 3600);
+    int remaining_mins = (int)(diff - (total_hours * 3600)) / 60;
+    int remaining_secs = (int)(diff - (total_hours * 3600) - (remaining_mins * 60));
+
+    sprintf(interval_out, "%02d:%02d:%02d", total_hours, remaining_mins, remaining_secs);
+}
+
+/* Main processing function for Task 2.3 */
+void process_task_2_3(SensorRecord valid_records[], int total_records) {
+    if (total_records <= 0) {
+        return;
+    }
+
+    char global_min_time[TIME_STRING_LENGTH] = "9999:99:99 99:99:99";
+    char global_max_time[TIME_STRING_LENGTH] = "0000:00:00 00:00:00";
+    int unique_ids[MAX_RECORDS];
+    int num_unique_ids = 0;
+
+    /* Find global min/max time and collect unique sensor IDs */
+    for (int i = 0; i < total_records; ++i) {
+        if (strcmp(valid_records[i].time, global_min_time) < 0) {
+            strcpy(global_min_time, valid_records[i].time);
+        }
+        if (strcmp(valid_records[i].time, global_max_time) > 0) {
+            strcpy(global_max_time, valid_records[i].time);
+        }
+
+        int id_exists = 0;
+        for (int j = 0; j < num_unique_ids; ++j) {
+            if (unique_ids[j] == valid_records[i].id) {
+                id_exists = 1;
+                break;
+            }
+        }
+        if (!id_exists) {
+            unique_ids[num_unique_ids++] = valid_records[i].id;
+        }
+    }
+
+    /* Sort unique IDs to ensure sequential output grouping */
+    for (int i = 0; i < num_unique_ids - 1; ++i) {
+        for (int j = 0; j < num_unique_ids - i - 1; ++j) {
+            if (unique_ids[j] > unique_ids[j + 1]) {
+                int temp = unique_ids[j];
+                unique_ids[j] = unique_ids[j + 1];
+                unique_ids[j + 1] = temp;
+            }
+        }
+    }
+
+    char simulation_interval[TIME_STRING_LENGTH];
+    calculate_simulation_interval(global_min_time, global_max_time, simulation_interval);
+
+    FILE *output_file = fopen(SUMMARY_CSV_FILE, "w");
+    if (output_file == NULL) {
+        /* Error handling implies logging to task2.log (handled by module 2 caller) */
+        return;
+    }
+
+    fprintf(output_file, HEADER_ROW);
+
+    /* Process statistics (Max, Min, Mean, Median) for each sensor ID */
+    for (int i = 0; i < num_unique_ids; ++i) {
+        int current_id = unique_ids[i];
+        double max_val = -1.0;
+        double min_val = 9999.0;
+        char max_time[TIME_STRING_LENGTH] = "9999:99:99 99:99:99";
+        char min_time[TIME_STRING_LENGTH] = "9999:99:99 99:99:99";
+        
+        double sum = 0.0;
+        int count = 0;
+        double sensor_values[MAX_RECORDS];
+
+        for (int j = 0; j < total_records; ++j) {
+            if (valid_records[j].id == current_id) {
+                double val = valid_records[j].value;
+                sensor_values[count] = val;
+                sum += val;
+
+                /* Max logic: prioritize the earliest timestamp if values are equal */
+                if (val > max_val) {
+                    max_val = val;
+                    strcpy(max_time, valid_records[j].time);
+                } else if (val == max_val && strcmp(valid_records[j].time, max_time) < 0) {
+                    strcpy(max_time, valid_records[j].time);
+                }
+
+                /* Min logic: prioritize the earliest timestamp if values are equal */
+                if (val < min_val) {
+                    min_val = val;
+                    strcpy(min_time, valid_records[j].time);
+                } else if (val == min_val && strcmp(valid_records[j].time, min_time) < 0) {
+                    strcpy(min_time, valid_records[j].time);
+                }
+
+                count++;
+            }
+        }
+
+        if (count > 0) {
+            double mean_val = sum / count;
+
+            sort_ascending(sensor_values, count);
+            double median_val;
+            if (count % 2 == 0) {
+                median_val = (sensor_values[count / 2 - 1] + sensor_values[count / 2]) / 2.0;
+            } else {
+                median_val = sensor_values[count / 2];
+            }
+
+            /* Export formatted output to CSV */
+            fprintf(output_file, "%d,max,%s,%.1f\n", current_id, max_time, max_val);
+            fprintf(output_file, "%d,min,%s,%.1f\n", current_id, min_time, min_val);
+            fprintf(output_file, "%d,mean,%s,%.2f\n", current_id, simulation_interval, mean_val);
+            fprintf(output_file, "%d,median,%s,%.1f\n", current_id, simulation_interval, median_val);
+        }
+    }
+
+    fclose(output_file);
+}
